@@ -1,0 +1,23 @@
+# Supplementary Table S1 field schema (per study area). Values are stubs.
+# Do not invent study-area city lists; fill when areas are chosen.
+
+required_fields:
+  study_area_id: string
+  product: enum [mitma_v2, lombardy_od2016, other]
+  product_version: string
+  date_window_start: date   # nullable for Lombardy
+  date_window_end: date
+  excluded_outage_dates: list[date]
+  hour_endpoints:
+    AM: [7, 8, 9]          # vendor hours; override if local peak file exists
+    PM: [16, 17, 18, 19]
+    night: [20, 21, 22, 23]
+    overnight: [0, 1, 2, 3, 4, 5, 6]
+  crs: string              # e.g. EPSG:25830 or Monte Mario Italy zone
+  population_vintage: string
+  osm_extract_date: date
+  tessellation_kind: enum [district_native, municipal_dissolve]
+  zone_id_list: stub       # filled later; leave empty
+  N: null
+  h_intra: null
+  mechanism_subset: false  # true when N>=80 and OSM features available
