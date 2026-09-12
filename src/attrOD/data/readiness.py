@@ -19,6 +19,7 @@ PathLike = Union[str, Path]
 
 HK_FID_MISSING_DEFAULT = ("9",)
 PROVISIONAL_DISTANCE = "provisional_wgs84_not_metric"
+METRIC_DISTANCE = "metric_projected"
 
 
 def _parse_yyyymmdd(token: str) -> Optional[date]:
@@ -280,6 +281,11 @@ def validate_metric_distance(
         smoke_allowed = bool(allow_provisional_for_smoke)
         notes.append("provisional WGS84 distances — verification/smoke only")
         status = PROVISIONAL_DISTANCE
+    elif status == METRIC_DISTANCE or status == "metric_projected":
+        paper_mainline_allowed = True
+        smoke_allowed = True
+        notes.append("metric projected Euclidean distances (draft2)")
+        status = METRIC_DISTANCE
     elif status in (None, ""):
         if crs and ("4326" in str(crs) or "WGS84" in str(crs).upper()):
             paper_mainline_allowed = False

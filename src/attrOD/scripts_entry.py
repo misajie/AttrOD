@@ -39,3 +39,7 @@ def run_hk_smoke():
 
 def run_orchestrator():
     _run("run_orchestrator")
+
+
+def build_metric_distances():
+    _run("build_metric_distances")
