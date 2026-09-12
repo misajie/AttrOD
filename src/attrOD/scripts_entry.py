@@ -35,3 +35,7 @@ def audit_data_readiness():
 
 def run_hk_smoke():
     _run("run_hk_smoke")
+
+
+def run_orchestrator():
+    _run("run_orchestrator")
