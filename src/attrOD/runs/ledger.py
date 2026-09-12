@@ -275,19 +275,22 @@ class RunLedger:
             append_log(self.paths["logs"], "sample", f"wrote {artifact}")
             return artifact
 
-    def run_shell_stage(self, command: str) -> None:
+    def run_shell_stage(self, command: str, *, cwd: Optional[PathLike] = None) -> None:
         """Execute an external stage with cwd=work and env isolation."""
         import subprocess
 
         self.set_stage("command")
+        run_cwd = Path(cwd) if cwd is not None else None
         with self.isolated_workdir() as work:
+            if run_cwd is None:
+                run_cwd = work
             append_log(self.paths["logs"], "command", f"$ {command}")
             log_path = self.paths["logs"] / "command.out"
             with log_path.open("w", encoding="utf-8") as out:
                 proc = subprocess.run(
                     command,
                     shell=True,
-                    cwd=str(work),
+                    cwd=str(run_cwd),
                     env={
                         **os.environ,
                         "ATTROD_RUN_ID": self.run_id,

@@ -20,7 +20,7 @@ if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
 from attrOD.condition_g.constraints import audit_constraints
-from attrOD.condition_g.generators import predictions_to_frame, run_registered_generators
+from attrOD.condition_g.generators import NOW2_CLASSIC_SIX, predictions_to_frame, run_registered_generators
 from attrOD.condition_s import run_condition_s_full
 from attrOD.data.manifest import build_run_manifest, write_json
 from attrOD.data.readiness import (
@@ -29,7 +29,6 @@ from attrOD.data.readiness import (
     validate_metric_distance,
 )
 from attrOD.metrics.condition_s import day_bootstrap_frame
-from attrOD.models.gravity import GravityModel
 from attrOD.partitions.condition_s import audit_partition_disjointness, build_partitions
 from attrOD.reporting.io import write_frame
 
@@ -55,16 +54,15 @@ def main() -> None:
                    help="use 1000 on server; default 50 for quick smoke")
     p.add_argument("--allow-backup", action="store_true", default=True)
     p.add_argument("--run-id", default="hk_smoke")
-    p.add_argument("--classic-model", default="Gravity_power",
-                   help="one classic Condition G generator for the vertical slice")
+    p.add_argument("--classic-models", default=",".join(NOW2_CLASSIC_SIX),
+                   help="comma-separated NOW-2 classic registry names (six-model matrix)")
     args = p.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text()) if Path(args.config).exists() else {}
     out = Path(args.out)
     cs_out = out / "condition_s"
-    cg_out = out / "condition_g" / args.classic_model
     cs_out.mkdir(parents=True, exist_ok=True)
-    cg_out.mkdir(parents=True, exist_ok=True)
+    (out / "condition_g").mkdir(parents=True, exist_ok=True)
 
     mat_dir = Path(args.hk_materialised)
     R, T, distances, zones, qa = _load_hk(mat_dir)
@@ -140,29 +138,38 @@ def main() -> None:
         "note": "HK smoke — schema/partition/numeric stability only; not paper evidence",
     })
 
-    # One classic Condition G generator (Gravity_power) + constraint QA
+    # NOW-2 / NOW-5 classic six Condition G matrix + O_i^T constraint QA
     attractiveness = np.maximum(R.sum(0), 1e-6)  # destination mass proxy
     train = list(range(R.shape[0]))
-    g = GravityModel(deterrence="power")
-    g.fit(R, distances, attractiveness, train_origins=train)
-    O_T = T.sum(1)
-    T_hat = g.emit(O_T)
-    cqa = audit_constraints(T_hat, O_T, zone_ids=zone_ids)
-    from attrOD.metrics.core import score_pair
-    scores = score_pair(T_hat, T, distances)
-    write_frame(cg_out / "predictions.parquet", predictions_to_frame(T_hat, zone_ids))
-    write_json(cg_out / "metrics.json", {
-        **scores,
-        "model": args.classic_model,
-        "verification_only": True,
-        "paper_mainline": False,
-    })
-    write_json(cg_out / "constraint_qa.json", {
-        **cqa,
-        "verification_only": True,
-        "paper_mainline": False,
-        "hbw_only_fit": True,
-    })
+    classic = [x.strip() for x in str(args.classic_models).split(",") if x.strip()]
+    results = run_registered_generators(
+        R, T, distances, attractiveness, train,
+        model_names=classic,
+        zone_ids=zone_ids,
+        seed=args.seed,
+        include_deep_adapters=False,
+    )
+    constraint_ok = {}
+    for model, pack in results.items():
+        model_dir = out / "condition_g" / model
+        model_dir.mkdir(parents=True, exist_ok=True)
+        write_frame(model_dir / "predictions.parquet", predictions_to_frame(pack["T_hat"], zone_ids))
+        write_json(model_dir / "metrics.json", {
+            **pack["metrics"],
+            "model": model,
+            "verification_only": True,
+            "paper_mainline": False,
+            **{k: pack["meta"].get(k) for k in ("is_stub", "is_oracle", "is_diagnostic", "hbw_only_fit")},
+        })
+        cqa = dict(pack["constraint_qa"])
+        cqa.update({
+            "verification_only": True,
+            "paper_mainline": False,
+            "hbw_only_fit": bool(pack["meta"].get("hbw_only_fit", True)),
+        })
+        write_json(model_dir / "constraint_qa.json", cqa)
+        constraint_ok[model] = cqa.get("ok")
+
 
     manifest = build_run_manifest(
         run_id=args.run_id,
@@ -183,7 +190,7 @@ def main() -> None:
         allow_backup_data_root=args.allow_backup,
         extra={
             "hk_materialised": str(mat_dir),
-            "classic_model": args.classic_model,
+            "classic_models": classic,
             "partition_index": part_index,
         },
     )
@@ -194,7 +201,7 @@ def main() -> None:
         "paper_mainline": False,
         "CPC_R": cs["metrics"].get("CPC_R"),
         "Delta": cs["metrics"].get("Delta"),
-        "constraint_ok": cqa.get("ok"),
+        "constraint_ok": constraint_ok,
         "fid_quarantine_ok": fid_qa.get("ok"),
     }, indent=2))
 

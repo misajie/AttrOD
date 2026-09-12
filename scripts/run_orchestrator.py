@@ -18,6 +18,7 @@ if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
 from attrOD.runs.ledger import RunLedger, load_manifest, load_status, new_run_id
+from attrOD.condition_g.generators import NOW2_CLASSIC_SIX
 
 
 def main() -> None:
@@ -59,11 +60,25 @@ def main() -> None:
         help="force a failure after init to verify status retains stage+hash+error",
     )
     p.add_argument("--dry-run", action="store_true", help="print planned run_id and exit")
+    p.add_argument("--pipeline", choices=["hk_smoke_classic"], default=None,
+                   help="ledger-wired draft2 HK smoke→S→G classic matrix (NOW-5)")
+    p.add_argument("--hk-materialised", default="outputs/hk_teralytics")
+    p.add_argument("--hk-out", default="outputs/hk_smoke")
+    p.add_argument("--classic-models", default=None,
+                   help="override classic registry csv for hk_smoke_classic")
     args = p.parse_args()
 
     cfg = {}
     if args.config:
         cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+    if args.pipeline:
+        cfg = {
+            **cfg,
+            "pipeline": args.pipeline,
+            "hk_materialised": args.hk_materialised,
+            "hk_out": args.hk_out,
+            "classic_models": args.classic_models or ",".join(NOW2_CLASSIC_SIX),
+        }
 
     missing = (
         [x.strip() for x in args.missing_fids.split(",") if x.strip()]
@@ -124,7 +139,7 @@ def main() -> None:
         )
         return
 
-    sample = args.sample or not args.command
+    sample = args.sample or (not args.command and not args.pipeline)
     try:
         if args.fail_demo:
             try:
@@ -135,7 +150,40 @@ def main() -> None:
             except Exception as exc:
                 ledger.fail(ledger.status.get("stage") or "init", exc)
                 raise
-        status = ledger.execute(sample=sample)
+        elif args.pipeline == "hk_smoke_classic":
+            models = args.classic_models or ",".join(NOW2_CLASSIC_SIX)
+            allow = " --allow-backup" if args.allow_backup else ""
+            smoke_py = _ROOT / "scripts" / "run_hk_smoke.py"
+            cmd = (
+                f'"{sys.executable}" "{smoke_py}"'
+                f" --data-root {args.data_root}"
+                f" --hk-materialised {args.hk_materialised}"
+                f" --out {args.hk_out}"
+                f" --seed {args.seed}"
+                f" --run-id {ledger.run_id}"
+                f" --classic-models {models}"
+                f"{allow}"
+            )
+            ledger.start()
+            ledger.set_stage("hk_smoke_classic", state="running")
+            # run from repo root so relative outputs/ paths resolve; work/ stays private
+            ledger.run_shell_stage(cmd, cwd=_ROOT)
+            # record artifact pointer under run dir
+            from attrOD.data.manifest import write_json as _wj
+            _wj(
+                ledger.paths["base"] / "pipeline_pointer.json",
+                {
+                    "pipeline": "hk_smoke_classic",
+                    "hk_out": str(Path(args.hk_out)),
+                    "classic_models": models.split(","),
+                    "verification_only": True,
+                    "paper_mainline": False,
+                },
+            )
+            ledger.succeed()
+            status = load_status(args.output_root, ledger.run_id)
+        else:
+            status = ledger.execute(sample=sample)
     except Exception:
         status = load_status(args.output_root, ledger.run_id)
         print(json.dumps(status, indent=2))

@@ -384,10 +384,19 @@ def build_dataset_readiness(
     mainline_ok = True
     if "daily_trips" in out["checks"] and not out["checks"]["daily_trips"].get("ok"):
         mainline_ok = False
-    if "hk_distance" in out["checks"] and not out["checks"]["hk_distance"].get("ok_mainline"):
-        # HK distance does not block MITMA mainline, only HK paper claims
-        if dataset == "hk":
+    # Hard gate (AttrOD room): any provisional distance kills paper mainline
+    for _name, chk in out["checks"].items():
+        if not isinstance(chk, dict):
+            continue
+        if chk.get("distance_status") == PROVISIONAL_DISTANCE:
             mainline_ok = False
-    out["paper_mainline_allowed"] = mainline_ok and dataset != "hk"
-    out["verification_only"] = dataset == "hk" or not mainline_ok
+        if chk.get("verification_only_required") is True:
+            mainline_ok = False
+        if "distance" in _name and chk.get("ok_mainline") is False:
+            mainline_ok = False
+    if dataset == "hk":
+        mainline_ok = False
+    out["paper_mainline_allowed"] = bool(mainline_ok)
+    out["verification_only"] = (not mainline_ok) or dataset == "hk"
+    out["ok_mainline"] = bool(mainline_ok)
     return out

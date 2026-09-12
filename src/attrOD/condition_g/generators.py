@@ -11,6 +11,18 @@ from attrOD.metrics.core import score_pair
 from attrOD.models.ipf import ipf_emit
 from attrOD.models.registry import fit_hbw_generator, get_model, list_models
 
+# NOW-2 / NOW-5 classic minimum matrix
+NOW2_CLASSIC_SIX = [
+    "Gravity_power",
+    "Gravity_exp",
+    "Radiation",
+    "RandomForest",
+    "IPF_G-row",
+    "IPF_G-row-traincol",
+    "Oracle",
+    "ClosedFormGravity",
+]
+
 
 def generate_production_constrained(
     model: Any,
@@ -55,10 +67,7 @@ def run_registered_generators(
         if n not in ("neuroGravity_stub", "neuroGravity_official", "DeepGravity")
     ]
     # classic defaults for smoke
-    default_classic = [
-        "Gravity_power", "Gravity_exp", "Radiation", "RandomForest",
-        "IPF_G-row", "IPF_G-row-traincol", "Oracle", "ClosedFormGravity", "meta-Gravity",
-    ]
+    default_classic = list(NOW2_CLASSIC_SIX)
     if model_names is None:
         names = [n for n in default_classic if n in list_models(include_oracle=True)]
 
