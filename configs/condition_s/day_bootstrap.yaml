@@ -1,0 +1,5 @@
+n_resamples: 1000
+unit: day
+within_day_od_preserved: true
+seed: 0
+# requires D >= 2 valid weekdays; Lombardy: disabled

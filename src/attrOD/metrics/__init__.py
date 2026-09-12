@@ -11,6 +11,13 @@ from .core import (
     score_pair,
     independence_table,
 )
+from .condition_s import (
+    compute_delta,
+    compute_lambda_r,
+    compute_lambda_rt,
+    day_bootstrap,
+    evaluate_independence_null,
+)
 
 __all__ = [
     "cpc",
@@ -23,4 +30,9 @@ __all__ = [
     "delta_cpc",
     "score_pair",
     "independence_table",
+    "compute_lambda_r",
+    "compute_lambda_rt",
+    "compute_delta",
+    "evaluate_independence_null",
+    "day_bootstrap",
 ]

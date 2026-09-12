@@ -1,4 +1,4 @@
-"""Condition S pipeline (draft2).
+"""Condition S pipeline (draft2) — Ticket 2 exact engine wiring.
 
 λ = sum(T)/sum(R); score (T, λR) and (T, λRᵀ); Δ = CPC(T,λRᵀ)-CPC(T,λR);
 independence null O_i^T D_j^T / sum D^T.
@@ -6,17 +6,32 @@ Day bootstrap 1000 when D≥2 valid weekdays; Lombardy has no day stack.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from attrOD.data.flow_table import h_intra
-from attrOD.metrics.core import (
-    cpc,
-    delta_cpc,
-    independence_table,
-    score_pair,
+from attrOD.metrics.condition_s import (
+    compute_delta,
+    compute_lambda_r,
+    compute_lambda_rt,
+    day_bootstrap as day_bootstrap_engine,
+    evaluate_independence_null,
+    metrics_to_row,
 )
+from attrOD.metrics.core import cpc
+
+# Re-export engine symbols for callers expecting pipeline API
+__all__ = [
+    "score_condition_s",
+    "bootstrap_days",
+    "split_half_cpc",
+    "compute_lambda_r",
+    "compute_lambda_rt",
+    "compute_delta",
+    "evaluate_independence_null",
+    "day_bootstrap",
+    "run_condition_s_full",
+]
 
 
 def score_condition_s(
@@ -28,25 +43,23 @@ def score_condition_s(
     R = np.asarray(R, dtype=float)
     if float(R.sum()) <= 0:
         return {"skip": 1.0, "reason_zero_R": 1.0}
-    lam, c_r, c_rt, delta = delta_cpc(T, R)
-    R_down = lam * R
-    scores_r = score_pair(T, R_down, distances)
-    scores_rt = score_pair(T, lam * R.T, distances)
-    ind = independence_table(T)
-    scores_ind = score_pair(T, ind, distances)
+    delta = compute_delta(T, R, distances=distances)
+    ind = evaluate_independence_null(T, distances=distances, observed=delta)
+    scores_r = delta.get("scores_R") or {}
+    scores_rt = delta.get("scores_RT") or {}
     out = {
-        "lambda": lam,
-        "h_intra_T": h_intra(T),
-        "CPC_R": c_r,
-        "CPC_RT": c_rt,
-        "Delta": delta,
-        "CPL": scores_r["CPL"],
-        "CPCd": scores_r["CPCd"],
-        "R2": scores_r["R2"],
-        "NRMSE": scores_r["NRMSE"],
-        "JSD": scores_r["JSD"],
-        "CPC_indep": scores_ind["CPC"],
-        "CPC_RT_full": scores_rt["CPC"],
+        "lambda": delta["lambda"],
+        "h_intra_T": delta.get("h_intra_T") if delta.get("h_intra_T") is not None else float("nan"),
+        "CPC_R": delta["CPC_R"],
+        "CPC_RT": delta["CPC_RT"],
+        "Delta": delta["Delta"],
+        "CPL": scores_r.get("CPL", float("nan")),
+        "CPCd": scores_r.get("CPCd", float("nan")),
+        "R2": scores_r.get("R2", float("nan")),
+        "NRMSE": scores_r.get("NRMSE", float("nan")),
+        "JSD": scores_r.get("JSD", float("nan")),
+        "CPC_indep": ind["CPC_indep"],
+        "CPC_RT_full": scores_rt.get("CPC", delta["CPC_RT"]),
     }
     return out
 
@@ -58,32 +71,28 @@ def bootstrap_days(
     n_resamples: int = 1000,
     rng: Optional[np.random.Generator] = None,
 ) -> Dict[str, float]:
-    """Recompute scores on each day; summarise mean + percentile bootstrap over days.
+    """Compat wrapper: returns flat summary dict (legacy keys)."""
+    seed = 0
+    if rng is not None:
+        # draw a seed from rng for reproducibility bridge
+        seed = int(rng.integers(0, 2**31 - 1))
+    full = day_bootstrap_engine(
+        T_by_day, R_by_day, distances=distances, n_resamples=n_resamples, seed=seed
+    )
+    return dict(full["bootstrap_summary"])
 
-    Requires D≥2. Each resample draws days with replacement, averages day-level CPC/Δ.
-    """
-    D = len(T_by_day)
-    if D < 2:
-        raise ValueError("day bootstrap requires D>=2")
-    if len(R_by_day) != D:
-        raise ValueError("T_by_day and R_by_day length mismatch")
-    rng = rng or np.random.default_rng(0)
-    day_scores = [score_condition_s(T_by_day[d], R_by_day[d], distances) for d in range(D)]
-    keys = ["CPC_R", "CPC_RT", "Delta", "lambda"]
-    means = {k: float(np.nanmean([s[k] for s in day_scores])) for k in keys}
 
-    boot = {k: [] for k in keys}
-    idx = np.arange(D)
-    for _ in range(n_resamples):
-        take = rng.choice(idx, size=D, replace=True)
-        for k in keys:
-            boot[k].append(float(np.nanmean([day_scores[i][k] for i in take])))
-    out = {f"mean_{k}": means[k] for k in keys}
-    for k in keys:
-        arr = np.asarray(boot[k], dtype=float)
-        out[f"p2.5_{k}"] = float(np.nanpercentile(arr, 2.5))
-        out[f"p97.5_{k}"] = float(np.nanpercentile(arr, 97.5))
-    return out
+def day_bootstrap(
+    T_by_day: Sequence[np.ndarray],
+    R_by_day: Sequence[np.ndarray],
+    distances: Optional[np.ndarray] = None,
+    n_resamples: int = 1000,
+    seed: int = 0,
+) -> Dict[str, Any]:
+    """Full day-bootstrap audit payload (Ticket 2)."""
+    return day_bootstrap_engine(
+        T_by_day, R_by_day, distances=distances, n_resamples=n_resamples, seed=seed
+    )
 
 
 def split_half_cpc(
@@ -99,9 +108,43 @@ def split_half_cpc(
     half = D // 2
     a = sum(mats_by_day[i] for i in idx[:half])
     b = sum(mats_by_day[i] for i in idx[half : 2 * half])
-    # mass-match
     sa, sb = float(a.sum()), float(b.sum())
     if sa <= 0 or sb <= 0:
         return float("nan")
     b = b * (sa / sb)
     return cpc(a, b)
+
+
+def run_condition_s_full(
+    T: np.ndarray,
+    R: np.ndarray,
+    *,
+    distances: Optional[np.ndarray] = None,
+    T_by_day: Optional[Sequence[np.ndarray]] = None,
+    R_by_day: Optional[Sequence[np.ndarray]] = None,
+    n_bootstrap: int = 1000,
+    seed: int = 0,
+    study_area: str = "",
+    partition: str = "full",
+    n_perm_null: int = 0,
+) -> Dict[str, Any]:
+    """Unified Condition S run returning json/parquet-ready payloads."""
+    delta = compute_delta(T, R, distances=distances)
+    null = evaluate_independence_null(
+        T, distances=distances, observed=delta, n_perm=n_perm_null, seed=seed
+    )
+    point = score_condition_s(T, R, distances)
+    row = metrics_to_row(delta, study_area=study_area, partition=partition)
+    row["CPC_indep"] = null["CPC_indep"]
+    payload: Dict[str, Any] = {
+        "metrics": point,
+        "metrics_row": row,
+        "delta": {k: v for k, v in delta.items() if k not in ("scores_R", "scores_RT")},
+        "independence_null": {k: v for k, v in null.items() if k != "perm_null" or n_perm_null},
+        "bootstrap": None,
+    }
+    if T_by_day is not None and R_by_day is not None and len(T_by_day) >= 2:
+        payload["bootstrap"] = day_bootstrap(
+            T_by_day, R_by_day, distances=distances, n_resamples=n_bootstrap, seed=seed
+        )
+    return payload

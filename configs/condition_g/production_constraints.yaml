@@ -1,0 +1,5 @@
+tol: 1.0e-6
+non_negative: true
+require_row_sums: true
+require_finite: true
+require_key_integrity: true

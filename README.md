@@ -62,6 +62,27 @@ python scripts/aggregate_tessellation.py --config configs/study_areas/<area>.yam
 
 No datasets are downloaded by this package. Synthetic smoke tests under `tests/` cover metrics and the production-constrained row-sum assertion only.
 
+
+## S1 — Hong Kong Teralytics materialisation
+
+Pipe-delimited vendor matrix + CHKU shapefile DBF centroids (WGS84). Strict 07–10 HBW is **unavailable**; reference proxy is weekdays ∩ `PartOfDay=4:00-12:00` ∩ `TripPurpose=to-work`.
+
+```bash
+# Place extracts (not shipped):
+#   data/hk/OD_Matrix_Teralytics/teralytics_matrix.csv
+#   data/hk/shapefile/CHKU_Shapes.{dbf,shp,prj}
+
+python scripts/process_hk_teralytics.py \
+  --csv data/hk/OD_Matrix_Teralytics/teralytics_matrix.csv \
+  --shapefile-dir data/hk/shapefile \
+  --out outputs/hk_teralytics \
+  --chunksize 500000
+```
+
+Artefacts under `--out`: `zones.csv`, `long_total.csv.gz` (or `.parquet`), `total.npy`, `R_HBW_proxy.npy`, `distance_provisional.npy` (label `provisional_wgs84_not_metric`), `qa.json`, `manifest.json`, optional `partitions/`. TOTAL aggregation excludes vendor `All` roll-ups on Age/Gender/TripDistance/TripDuration when present (see `qa.json` → `total_aggregation`). Shapefile FID set is 1–8,10–32 (FID 9 missing); unmatched matrix ids are listed in `qa.json`.
+
+Config stub: `configs/study_areas/hk_teralytics.yaml`.
+
 ## Package map → draft2
 
 | Module | draft2 section |
@@ -76,6 +97,53 @@ No datasets are downloaded by this package. Synthetic smoke tests under `tests/`
 | `attrOD.spatial` | 5-block queen contiguous splits |
 | `attrOD.scale` | Official dissolve + random contiguous merge |
 | `attrOD.reporting` | Table schemas 1–8 |
+
+
+## Tickets 1–3 (server readiness, Condition S engine, Condition G registry)
+
+Hard rules: no invented cities/Table 1; no Mac `data_root`; HK always `verification_only=true` / `paper_mainline=false`; DeepGravity pin `8693536`, NeuroGravity pin `7e29ef0`; NeuroGravity stub ≠ formal main results.
+
+```bash
+# 0) Data readiness (myserver: --data-root ~/AttrOD/data)
+python scripts/audit_data_readiness.py \
+  --data-root ~/AttrOD/data \
+  --out outputs/readiness \
+  --hk-qa outputs/hk_teralytics/qa.json
+
+# On this box only, backup root is allowed explicitly:
+python scripts/audit_data_readiness.py \
+  --data-root /workspace/AttrOD/data --allow-backup \
+  --out outputs/readiness --hk-qa outputs/hk_teralytics/qa.json
+
+# 1) HK vertical smoke (Condition S + Gravity_power + O_i^T QA)
+python scripts/run_hk_smoke.py \
+  --data-root ~/AttrOD/data \
+  --hk-materialised outputs/hk_teralytics \
+  --out outputs/hk_smoke \
+  --bootstrap-resamples 1000
+
+# 2) Condition S exact engine (matrices)
+python scripts/run_condition_s.py --config configs/study_areas/hk_teralytics.yaml \
+  --partitions outputs/hk_teralytics --T outputs/hk_teralytics/total.npy \
+  --R outputs/hk_teralytics/R_HBW_proxy.npy --out outputs/hk_smoke/condition_s \
+  --verification-only --allow-backup --data-root /workspace/AttrOD/data
+
+# 3) Condition G registry + adapter dry-run
+python scripts/run_condition_g.py --config configs/study_areas/hk_teralytics.yaml \
+  --partitions outputs/hk_teralytics --out outputs/hk_smoke/condition_g \
+  --R outputs/hk_teralytics/R_HBW_proxy.npy --T outputs/hk_teralytics/total.npy \
+  --distances outputs/hk_teralytics/distance_provisional.npy \
+  --attractiveness outputs/hk_teralytics/R_HBW_proxy.npy --registry \
+  --models Gravity_power,Radiation,IPF_G-row,Oracle --verification-only
+
+python scripts/run_condition_g.py --config configs/study_areas/hk_teralytics.yaml \
+  --partitions outputs/hk_teralytics --out outputs/hk_smoke/condition_g \
+  --adapters-dry-run
+```
+
+Stub vs ready:
+- **Ready:** manifest/readiness validators, Condition S λ/Δ/null/day-bootstrap, partitions audit, O_i^T project/audit, classic registry (gravity/radiation/RF/IPF/oracle/closed-form/meta-Gravity), HK smoke CLI, unit tests with synthetic fixtures.
+- **Stub / reserved:** `NeuroGravityAdapter(backend="stub")` (default); `backend="official"` reserved until torch_geometric / integration decision — never paper-mainline. DeepGravity uses package hyperparameters with read-only third_party pin audit; full official training loop wiring is adapter-mediated.
 
 ## License
 

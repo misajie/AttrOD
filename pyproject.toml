@@ -17,6 +17,7 @@ dependencies = [
   "scikit-learn>=1.3",
   "pyyaml>=6.0",
   "networkx>=3.0",
+  "pyarrow>=14.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,8 @@ attrOD-run-condition-s = "attrOD.scripts_entry:run_condition_s"
 attrOD-run-condition-g = "attrOD.scripts_entry:run_condition_g"
 attrOD-make-spatial-blocks = "attrOD.scripts_entry:make_spatial_blocks"
 attrOD-aggregate-tessellation = "attrOD.scripts_entry:aggregate_tessellation"
+attrOD-audit-data-readiness = "attrOD.scripts_entry:audit_data_readiness"
+attrOD-run-hk-smoke = "attrOD.scripts_entry:run_hk_smoke"
 
 [tool.setuptools.packages.find]
 where = ["src"]

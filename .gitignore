@@ -12,3 +12,7 @@ build/
 .DS_Store
 *.npy
 *.parquet
+
+# third_party clones stay on disk; track pin notes only in git
+/third_party/DeepGravity/
+/third_party/NeuroGravity/

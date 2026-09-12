@@ -1,0 +1,17 @@
+classic:
+  - Gravity_power
+  - Gravity_exp
+  - Radiation
+  - RandomForest
+  - IPF_G-row
+  - IPF_G-row-traincol
+  - ClosedFormGravity
+  - meta-Gravity
+oracle:
+  - Oracle  # upper-bound / diagnostic only
+deep:
+  - DeepGravity  # pin 8693536
+neurogravity:
+  stub: neuroGravity_stub
+  official: neuroGravity_official  # reserved; not paper mainline yet
+hbw_only_fit: true

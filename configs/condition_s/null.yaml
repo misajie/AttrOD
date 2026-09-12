@@ -1,0 +1,10 @@
+nulls:
+  - name: independence_O_i_D_j
+    definition: "O_i^T D_j^T / sum_k D_k^T"
+  - name: mass_scaled_R
+    definition: "lambda * R"
+  - name: mass_scaled_RT
+    definition: "lambda * R.T"
+optional_permutation:
+  n_perm: 0
+  seed: 0

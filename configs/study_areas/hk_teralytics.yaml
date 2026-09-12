@@ -1,0 +1,51 @@
+# Hong Kong — Teralytics OD (S1). Paths assume extracts under data/hk/.
+study_area_id: hk_teralytics
+product: teralytics_hk
+product_version: "2020_waves"
+date_window_start: "2020-01-24"
+date_window_end: "2020-08-31"
+excluded_outage_dates: []
+hour_endpoints:
+  # Vendor PartOfDay bins (not clock hours). Morning proxy: 4:00-12:00.
+  AM_proxy_part_of_day: "4:00-12:00"
+  PartOfDay: ["0:00-4:00", "4:00-12:00", "12:00-20:00", "20:00-0:00"]
+crs: EPSG:4326
+population_vintage: null
+osm_extract_date: null
+tessellation_kind: district_native
+zone_ids: []  # filled from shapefile FID set 1-8,10-32 (FID 9 absent)
+paths:
+  flows: data/hk/OD_Matrix_Teralytics/teralytics_matrix.csv
+  zones: data/hk/shapefile
+  anonymization_stats: data/hk/OD_Matrix_Teralytics/OD-Matrix_Anonymization_Statistics.csv
+  population: null
+  osm: data/osm/extracts
+reference_R:
+  name: R_HBW_proxy
+  weekdays_only: true
+  PartOfDay: "4:00-12:00"
+  TripPurpose: to-work
+  note: strict 07-10 HBW unavailable
+inclusion:
+  min_N: 25
+  max_h_intra: 0.70
+condition_s:
+  bootstrap_resamples: 1000
+condition_g:
+  ipf_tol: 1.0e-4
+  ipf_max_iter: 1000
+spatial:
+  n_blocks: 5
+  min_N_mechanism: 80
+models:
+  gravity_power_beta_bounds: [0.1, 3.0]
+  gravity_exp_beta_bounds: [0.01, 2.0]
+  deep_gravity:
+    epochs: 20
+    lr: 5.0e-6
+    momentum: 0.9
+    batch_origins: 64
+    max_dest_sample: 512
+  neurogravity:
+    tau: 2.0
+    fewshot_masks: ["1pct_edges", "10pct_edges", "10pct_zones"]

@@ -1,0 +1,8 @@
+schema_version: draft2-condition-s-v1
+include_full: true
+purpose_time:
+  - other|AM
+  - home|PM
+  - home|AM
+length_bands: []  # fill from draft2 / product when scoring Table 4
+extra: []

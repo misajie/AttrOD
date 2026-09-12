@@ -3,7 +3,7 @@
 
 required_fields:
   study_area_id: string
-  product: enum [mitma_v2, lombardy_od2016, other]
+  product: enum [mitma_v2, lombardy_od2016, teralytics_hk, other]
   product_version: string
   date_window_start: date   # nullable for Lombardy
   date_window_end: date

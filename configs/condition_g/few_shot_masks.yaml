@@ -1,0 +1,11 @@
+# draft2 / Yang et al. defaults — do not invent extra tiers
+masks:
+  - 1pct_edges
+  - 10pct_edges
+  - 10pct_zones
+tau: 2.0
+seed: 0
+no_leakage:
+  - Masks act on HBW R pretrain + declared target edges only
+  - Never use Condition G spatial-block test origins as observed edges
+  - Scoring cells must remain disjoint from revealed edges

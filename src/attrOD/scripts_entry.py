@@ -27,3 +27,11 @@ def make_spatial_blocks():
 
 def aggregate_tessellation():
     _run("aggregate_tessellation")
+
+
+def audit_data_readiness():
+    _run("audit_data_readiness")
+
+
+def run_hk_smoke():
+    _run("run_hk_smoke")

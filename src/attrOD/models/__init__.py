@@ -8,6 +8,13 @@ from .closed_form import ClosedFormGravity
 from .neurogravity import MetaGravity, NeuroGravity
 from .ipf import ipf_emit
 from .oracle import OracleGravity
+from .registry import (
+    ModelEntry,
+    fit_hbw_generator,
+    get_model,
+    list_models,
+    register_model,
+)
 
 __all__ = [
     "assert_production_constrained",
@@ -21,4 +28,9 @@ __all__ = [
     "NeuroGravity",
     "ipf_emit",
     "OracleGravity",
+    "ModelEntry",
+    "fit_hbw_generator",
+    "get_model",
+    "list_models",
+    "register_model",
 ]
