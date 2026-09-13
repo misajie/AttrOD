@@ -69,8 +69,23 @@ def _records_from_json(obj: Any, inherited_partition: str | None = None) -> list
     if not isinstance(obj, dict):
         return []
 
-    partition = obj.get("partition", inherited_partition)
-    if any(key in obj for key in ("CPC_R", "CPC_RT", "CPC_T_lambdaR", "CPC_T_lambdaRT", "Delta", "CPC_indep")):
+    # case-insensitive key lookup for JSON metrics
+    lower_map = {str(k).lower(): k for k in obj}
+    if "partition" in lower_map:
+        partition = obj[lower_map["partition"]]
+    else:
+        partition = inherited_partition
+    metric_keys = (
+        "cpc_r",
+        "cpc_rt",
+        "cpc_t_lambdar",
+        "cpc_t_lambdart",
+        "delta",
+        "cpc_indep",
+        "lambda",
+        "λ",
+    )
+    if any(k in lower_map for k in metric_keys):
         record = dict(obj)
         if partition is not None:
             record["partition"] = partition
@@ -112,6 +127,9 @@ def _normalise_columns(
         "r2": "R2",
         "r_squared": "R2",
         "resample_id": "resample",
+        "lambda": "lambda",
+        "lam": "lambda",
+        "λ": "lambda",
     }
     rename = {}
     for column in frame.columns:
@@ -198,7 +216,13 @@ def load_bootstrap(root: Path) -> pd.DataFrame | None:
     frames = []
     for path in candidates:
         frame = pd.read_parquet(path)
-        default_partition = path.parent.name
+        # root-level day_bootstrap.parquet is the full cut, not the parent folder name
+        if path.resolve() == (root / "day_bootstrap.parquet").resolve():
+            default_partition = "full"
+        elif path.parent.resolve() == root.resolve():
+            default_partition = "full"
+        else:
+            default_partition = path.parent.name
         frame = _normalise_columns(
             frame,
             BOOTSTRAP_COLUMNS,
