@@ -56,42 +56,29 @@ def _is_wide_motive_mode(df: pd.DataFrame) -> bool:
 
 
 def wide_motive_mode_to_long(raw: pd.DataFrame) -> pd.DataFrame:
-    """Reshape LAV_/STU_/OCC_/AFF_/RIT_×mode wide cells to long motive rows.
+    """Reshape LAV_/STU_/OCC_/AFF_/RIT_ x mode wide cells to long motive rows.
 
-    Keeps origin/destination and FASCIA_ORARIA when present. Modes are summed
-    later by partition builders (draft2: sum over attributes not defining the cut).
+    Preserves ZONA_ORIG/ZONA_DEST + PROV_ORIG/PROV_DEST for zone join, and
+    FASCIA_ORARIA (hour bins like 07:00-07:59). Modes stay in a mode column
+    and are summed by partition builders.
     """
     df = raw.copy()
-    # origin/destination aliases before melt
-    for a, b in [
-        ("ORIGINE", "origin"),
-        ("DESTINAZIONE", "destination"),
-        ("origin_id", "origin"),
-        ("destination_id", "destination"),
-        ("COD_ZONA_O", "origin"),
-        ("COD_ZONA_D", "destination"),
-        ("ZONA_O", "origin"),
-        ("ZONA_D", "destination"),
-        ("ORIG", "origin"),
-        ("DEST", "destination"),
-    ]:
+    renames = {
+        "ORIGINE": "ZONA_ORIG",
+        "DESTINAZIONE": "ZONA_DEST",
+        "ZONA_O": "ZONA_ORIG",
+        "ZONA_D": "ZONA_DEST",
+        "COD_ZONA_O": "ZONA_ORIG",
+        "COD_ZONA_D": "ZONA_DEST",
+        "PROV_O": "PROV_ORIG",
+        "PROV_D": "PROV_DEST",
+        "fascia_oraria": "FASCIA_ORARIA",
+        "FASCIA": "FASCIA_ORARIA",
+        "ORARIO": "FASCIA_ORARIA",
+    }
+    for a, b in renames.items():
         if a in df.columns and b not in df.columns:
             df = df.rename(columns={a: b})
-    for a, b in [
-        ("FASCIA_ORARIA", "FASCIA_ORARIA"),
-        ("fascia_oraria", "FASCIA_ORARIA"),
-        ("FASCIA", "FASCIA_ORARIA"),
-        ("ORARIO", "FASCIA_ORARIA"),
-    ]:
-        if a in df.columns and (b not in df.columns or a == b):
-            if a != b:
-                df = df.rename(columns={a: b})
-
-    if "origin" not in df.columns or "destination" not in df.columns:
-        raise ValueError(
-            "wide OD needs origin/destination columns "
-            "(ORIGINE/DESTINAZIONE or COD_ZONA_O/D)"
-        )
 
     value_cols = []
     meta = []
@@ -108,7 +95,24 @@ def wide_motive_mode_to_long(raw: pd.DataFrame) -> pd.DataFrame:
     if not value_cols:
         raise ValueError("no LAV_/STU_/OCC_/AFF_/RIT_ value columns found")
 
-    id_vars = [c for c in ("origin", "destination", "FASCIA_ORARIA") if c in df.columns]
+    id_vars = [
+        c
+        for c in (
+            "ZONA_ORIG",
+            "ZONA_DEST",
+            "PROV_ORIG",
+            "PROV_DEST",
+            "FASCIA_ORARIA",
+            "origin",
+            "destination",
+        )
+        if c in df.columns
+    ]
+    if not ({"ZONA_ORIG", "ZONA_DEST"} <= set(id_vars) or {"origin", "destination"} <= set(id_vars)):
+        raise ValueError(
+            "wide OD needs ZONA_ORIG/ZONA_DEST (or origin/destination) columns"
+        )
+
     long = df.melt(id_vars=id_vars, value_vars=value_cols, var_name="_wide_col", value_name="flow")
     pref_map = {c: WIDE_MOTIVE_PREFIX[p] for c, p, _m in meta}
     mode_map = {c: m for c, _p, m in meta}
@@ -116,11 +120,104 @@ def wide_motive_mode_to_long(raw: pd.DataFrame) -> pd.DataFrame:
     long["mode"] = long["_wide_col"].map(mode_map)
     long["flow"] = pd.to_numeric(long["flow"], errors="coerce").fillna(0.0)
     long = long.drop(columns=["_wide_col"])
-    # drop exact zeros to shrink
     long = long.loc[long["flow"] != 0.0].copy()
     return long.reset_index(drop=True)
 
 
+def parse_fascia_hour(fascia: object) -> float:
+    """Extract start hour from labels like 07:00-07:59 or mattina."""
+    import re as _re
+
+    if fascia is None or (isinstance(fascia, float) and not np.isfinite(fascia)):
+        return float("nan")
+    s = str(fascia).strip().lower()
+    if s in {"mattina", "am", "morning"} or "matt" in s:
+        return 8.0
+    if s in {"pomeriggio", "sera", "pm", "afternoon", "evening"} or "pomer" in s or s == "sera":
+        return 17.0
+    m = _re.match(r"^(\d{1,2}):(\d{2})", s)
+    if m:
+        return float(int(m.group(1)))
+    m = _re.match(r"^(\d{1,2})$", s)
+    if m:
+        return float(int(m.group(1)))
+    return float("nan")
+
+
+def attach_fascia_hour(df: pd.DataFrame, time_col: str = "FASCIA_ORARIA") -> pd.DataFrame:
+    out = df.copy()
+    if time_col in out.columns:
+        out["fascia_hour"] = out[time_col].map(parse_fascia_hour)
+    else:
+        out["fascia_hour"] = np.nan
+    return out
+
+
+def join_od_to_zone_ids(
+    od: pd.DataFrame,
+    zones: pd.DataFrame,
+    *,
+    zone_id_col: str = "id_zona",
+    desc_col: str = "desc_zona",
+    prov_col: str = "sigla_prov",
+    drop_unmatched: bool = True,
+) -> pd.DataFrame:
+    """Map ZONA_ORIG/DEST + PROV_* name keys to zone ids; drop unmatched/external."""
+    z = zones.copy()
+    if zone_id_col not in z.columns:
+        raise ValueError(f"zones missing {zone_id_col}")
+    if desc_col not in z.columns:
+        raise ValueError(f"zones missing {desc_col} for name join")
+    z["_desc_key"] = z[desc_col].astype(str).str.strip().str.upper()
+    if prov_col in z.columns:
+        z["_prov_key"] = z[prov_col].astype(str).str.strip().str.upper()
+        z["_join_key"] = z["_prov_key"] + "||" + z["_desc_key"]
+    else:
+        z["_join_key"] = z["_desc_key"]
+    lookup = (
+        z.drop_duplicates("_join_key", keep="first")
+        .set_index("_join_key")[zone_id_col]
+        .astype(str)
+        .to_dict()
+    )
+    desc_only = (
+        z.drop_duplicates("_desc_key", keep="first")
+        .set_index("_desc_key")[zone_id_col]
+        .astype(str)
+        .to_dict()
+    )
+
+    out = od.copy()
+    if "origin" in out.columns and "destination" in out.columns and "ZONA_ORIG" not in out.columns:
+        out["origin"] = out["origin"].astype(str)
+        out["destination"] = out["destination"].astype(str)
+        return out
+
+    if "ZONA_ORIG" not in out.columns or "ZONA_DEST" not in out.columns:
+        raise ValueError("OD needs ZONA_ORIG/ZONA_DEST for name join")
+
+    o_desc = out["ZONA_ORIG"].astype(str).str.strip().str.upper()
+    d_desc = out["ZONA_DEST"].astype(str).str.strip().str.upper()
+    if "PROV_ORIG" in out.columns and "PROV_DEST" in out.columns and prov_col in z.columns:
+        o_key = out["PROV_ORIG"].astype(str).str.strip().str.upper() + "||" + o_desc
+        d_key = out["PROV_DEST"].astype(str).str.strip().str.upper() + "||" + d_desc
+        out["origin"] = o_key.map(lookup)
+        out["destination"] = d_key.map(lookup)
+        miss_o = out["origin"].isna()
+        miss_d = out["destination"].isna()
+        out.loc[miss_o, "origin"] = o_desc[miss_o].map(desc_only)
+        out.loc[miss_d, "destination"] = d_desc[miss_d].map(desc_only)
+    else:
+        out["origin"] = o_desc.map(desc_only)
+        out["destination"] = d_desc.map(desc_only)
+
+    before = len(out)
+    if drop_unmatched:
+        out = out.dropna(subset=["origin", "destination"]).copy()
+    out["origin"] = out["origin"].astype(str)
+    out["destination"] = out["destination"].astype(str)
+    out.attrs["n_dropped_unmatched"] = int(before - len(out))
+    return out.reset_index(drop=True)
 
 
 def sha256_16(path: Path) -> str:
@@ -180,10 +277,14 @@ def normalise_od_columns(raw: pd.DataFrame) -> pd.DataFrame:
                 break
     if "motive" not in df.columns:
         raise ValueError(
-            "OD table needs motive (MOTIVO) or wide LAV_/STU_/OCC_/AFF_/RIT_×mode columns"
+            "OD table needs motive (MOTIVO) or wide LAV_/STU_/OCC_/AFF_/RIT_ x mode columns"
         )
-    if "origin" not in df.columns or "destination" not in df.columns:
-        raise ValueError("OD table needs origin/destination columns")
+    has_ids = "origin" in df.columns and "destination" in df.columns
+    has_names = "ZONA_ORIG" in df.columns and "ZONA_DEST" in df.columns
+    if not has_ids and not has_names:
+        raise ValueError(
+            "OD table needs origin/destination ids or ZONA_ORIG/ZONA_DEST (+ PROV_*) names"
+        )
     return df
 
 
@@ -228,7 +329,18 @@ def clip_zone_ids(
     return ids
 
 
-def _time_mask(df: pd.DataFrame, bands: Sequence[str], time_col: str = "FASCIA_ORARIA") -> pd.Series:
+def _time_mask(
+    df: pd.DataFrame,
+    bands: Sequence[str],
+    time_col: str = "FASCIA_ORARIA",
+    *,
+    hours: Optional[Sequence[int]] = None,
+) -> pd.Series:
+    """Match named bands and/or numeric hour bins (draft2 AM=7-9, PM=16-19)."""
+    if hours is not None:
+        work = df if "fascia_hour" in df.columns else attach_fascia_hour(df, time_col=time_col)
+        h = pd.to_numeric(work["fascia_hour"], errors="coerce")
+        return h.isin({int(x) for x in hours})
     if time_col not in df.columns:
         return pd.Series(True, index=df.index)
     t = _norm_series(df[time_col])
@@ -258,8 +370,14 @@ def build_partition_long(
     ].copy()
 
     mvals = _norm_series(df["motive"])
-    am = _time_mask(df, AM_BANDS)
-    pm = _time_mask(df, PM_BANDS)
+    df = attach_fascia_hour(df)
+    # draft2 defaults: AM 07-10 (hours 7,8,9); PM 16-20 (hours 16..19)
+    am = _time_mask(df, AM_BANDS, hours=(7, 8, 9))
+    pm = _time_mask(df, PM_BANDS, hours=(16, 17, 18, 19))
+    named_am = _time_mask(df, AM_BANDS)
+    named_pm = _time_mask(df, PM_BANDS)
+    am = am | (df["fascia_hour"].isna() & named_am)
+    pm = pm | (df["fascia_hour"].isna() & named_pm)
 
     parts: Dict[str, pd.DataFrame] = {}
     parts["R"] = R_long
@@ -411,34 +529,57 @@ def write_lombardy_freeze(
     return manifest
 
 
+
 def materialise_lombardy(
     *,
     od_path: PathLike,
     zones_path: PathLike,
     out_dir: PathLike,
-    zone_id_col: str = "id",
+    zone_id_col: str = "id_zona",
+    zone_desc_col: str = "desc_zona",
+    zone_prov_col: str = "sigla_prov",
     fua_path: Optional[PathLike] = None,
     external_ids: Optional[Sequence[str]] = None,
     min_n: int = 25,
     crs: Optional[str] = None,
-    clip_rule: str = "provincial_or_fua_internal",
+    clip_rule: str = "internal_zones_drop_external_swiss",
     study_area: str = "lombardy",
+    swiss_prov_codes: Sequence[str] = ("CH", "TI", "GR", "VS"),
 ) -> Dict[str, Any]:
-    """End-to-end materialise from raw OD + zone polygons."""
+    """End-to-end materialise from raw OD + zone polygons (P5-MAT / P5-MAT-FIX)."""
     import geopandas as gpd
 
     raw = load_od_table(Path(od_path))
     raw = normalise_od_columns(raw)
     zones = gpd.read_file(zones_path)
     if zone_id_col not in zones.columns:
-        raise ValueError(f"zone id column {zone_id_col!r} missing")
+        raise ValueError(f"zone id column {zone_id_col!r} missing in {list(zones.columns)}")
     zones = zones.copy()
     zones["_zid"] = zones[zone_id_col].astype(str)
 
+    if "PROV_ORIG" in raw.columns:
+        swiss = {c.upper() for c in swiss_prov_codes}
+        p_o = raw["PROV_ORIG"].astype(str).str.strip().str.upper()
+        p_d = (
+            raw["PROV_DEST"].astype(str).str.strip().str.upper()
+            if "PROV_DEST" in raw.columns
+            else p_o
+        )
+        raw = raw.loc[~p_o.isin(swiss) & ~p_d.isin(swiss)].copy()
+
+    raw = join_od_to_zone_ids(
+        raw,
+        zones,
+        zone_id_col=zone_id_col,
+        desc_col=zone_desc_col,
+        prov_col=zone_prov_col,
+        drop_unmatched=True,
+    )
+    n_dropped = int(getattr(raw, "attrs", {}).get("n_dropped_unmatched", 0))
+
     fua = gpd.read_file(fua_path) if fua_path else None
-    # candidate ids = zones present in OD or polygon file
-    od_zones = sorted(set(raw["origin"].astype(str)) | set(raw["destination"].astype(str)))
     poly_ids = zones["_zid"].astype(str).tolist()
+    od_zones = sorted(set(raw["origin"].astype(str)) | set(raw["destination"].astype(str)))
     candidates = [z for z in poly_ids if z in set(od_zones)] or poly_ids
 
     zone_ids = clip_zone_ids(
@@ -453,7 +594,6 @@ def materialise_lombardy(
     D, qa, crs_res = load_zones_for_distance(
         Path(zones_path), zone_id_col, zone_ids, study_area=study_area, crs=crs
     )
-    # verify studio not in R mass from raw motives overlapping R cells — soft check via heldout
     return write_lombardy_freeze(
         out_dir,
         matrices=mats,
@@ -461,5 +601,14 @@ def materialise_lombardy(
         distance_qa=qa,
         zone_ids=zone_ids,
         clip_rule=clip_rule,
-        extra_manifest={"crs_resolved": crs_res, "od_path": str(od_path), "zones_path": str(zones_path)},
+        extra_manifest={
+            "crs_resolved": crs_res,
+            "od_path": str(od_path),
+            "zones_path": str(zones_path),
+            "zone_id_col": zone_id_col,
+            "zone_desc_col": zone_desc_col,
+            "zone_prov_col": zone_prov_col,
+            "n_dropped_unmatched_od_rows": n_dropped,
+            "swiss_prov_codes": list(swiss_prov_codes),
+        },
     )

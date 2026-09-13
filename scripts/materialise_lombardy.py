@@ -32,7 +32,9 @@ def main() -> None:
     p = argparse.ArgumentParser(description="P5-MAT Lombardy materialise + freeze")
     p.add_argument("--od", required=True, help="raw OD table (csv/parquet/xlsx); long MOTIVO or wide LAV_/STU_/OCC_/AFF_/RIT_ x mode")
     p.add_argument("--zones", required=True, help="zone polygons (gpkg/geojson/shp)")
-    p.add_argument("--zone-id-col", default="id")
+    p.add_argument("--zone-id-col", default="id_zona")
+    p.add_argument("--zone-desc-col", default="desc_zona")
+    p.add_argument("--zone-prov-col", default="sigla_prov")
     p.add_argument("--fua", default=None, help="optional FUA/provincial polygon for clip")
     p.add_argument("--out", default="outputs/materialised/lombardy_cs")
     p.add_argument("--data-root", default="~/AttrOD/data/lombardy")
@@ -56,6 +58,8 @@ def main() -> None:
         zones_path=args.zones,
         out_dir=args.out,
         zone_id_col=args.zone_id_col,
+        zone_desc_col=args.zone_desc_col,
+        zone_prov_col=args.zone_prov_col,
         fua_path=args.fua,
         external_ids=args.external_id or None,
         min_n=args.min_n,
