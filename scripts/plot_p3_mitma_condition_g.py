@@ -80,22 +80,27 @@ def _load_rows(root: Path) -> pd.DataFrame:
 
 def _normalise(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
-    aliases = {
-        "model": "law_model",
-        "name": "law_model",
-        "cpc": "CPC",
-        "r2": "R2",
-        "r_squared": "R2",
-        "pearson_r": "pearson",
-        "corr": "pearson",
-        "correlation": "pearson",
-    }
+    # unify model name column
+    if "law_model" not in frame.columns:
+        for alt in ("model", "name", "Model"):
+            if alt in frame.columns:
+                frame = frame.rename(columns={alt: "law_model"})
+                break
+    elif "model" in frame.columns:
+        frame["law_model"] = frame["law_model"].fillna(frame["model"])
+        frame = frame.drop(columns=["model"])
+
     rename = {}
     for col in frame.columns:
         low = str(col).lower()
-        if low in aliases:
-            rename[col] = aliases[low]
+        if low == "cpc":
+            rename[col] = "CPC"
+        elif low in {"r2", "r_squared"}:
+            rename[col] = "R2"
+        elif low in {"pearson", "pearson_r", "corr", "correlation"}:
+            rename[col] = "pearson"
     frame = frame.rename(columns=rename)
+
     if "law_model" not in frame.columns:
         raise SystemExit(f"missing law_model column; have {list(frame.columns)}")
     for col in ("CPC", "R2", "pearson"):
@@ -103,14 +108,14 @@ def _normalise(frame: pd.DataFrame) -> pd.DataFrame:
             frame[col] = pd.to_numeric(frame[col], errors="coerce")
     if "CPC" not in frame.columns:
         raise SystemExit("missing CPC column")
+
     frame["law_model"] = frame["law_model"].astype(str)
-    # dedupe by model keeping first
     frame = frame.drop_duplicates(subset=["law_model"], keep="first").reset_index(drop=True)
     if "diagnostic" in frame.columns:
-        diag_flag = frame["diagnostic"].astype(bool)
+        diag_flag = frame["diagnostic"].fillna(False).astype(bool)
     else:
         diag_flag = pd.Series(False, index=frame.index)
-    frame["diagnostic"] = diag_flag | frame["law_model"].isin(DIAGNOSTIC_MODELS)
+    frame["diagnostic"] = (diag_flag.to_numpy() | frame["law_model"].isin(DIAGNOSTIC_MODELS).to_numpy())
     return frame
 
 
