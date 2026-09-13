@@ -43,3 +43,7 @@ def run_orchestrator():
 
 def build_metric_distances():
     _run("build_metric_distances")
+
+
+def run_mitma_condition_s():
+    _run("run_mitma_condition_s")

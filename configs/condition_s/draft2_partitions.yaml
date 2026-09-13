@@ -4,5 +4,9 @@ purpose_time:
   - other|AM
   - home|PM
   - home|AM
-length_bands: []  # fill from draft2 / product when scoring Table 4
+length_bands:
+  - 0.5-2
+  - 2-10
+  - 10-50
+  - ">50"
 extra: []

@@ -35,6 +35,7 @@ attrOD-audit-data-readiness = "attrOD.scripts_entry:audit_data_readiness"
 attrOD-run-hk-smoke = "attrOD.scripts_entry:run_hk_smoke"
 attrOD-run = "attrOD.scripts_entry:run_orchestrator"
 attrOD-build-metric-distances = "attrOD.scripts_entry:build_metric_distances"
+attrOD-run-mitma-condition-s = "attrOD.scripts_entry:run_mitma_condition_s"
 
 [tool.setuptools.packages.find]
 where = ["src"]
