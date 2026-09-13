@@ -39,10 +39,16 @@ def _is_oracle(name: str) -> bool:
     return str(name).strip().lower() == "oracle"
 
 def _looks_like_score_row(obj: dict[str, Any]) -> bool:
-    keys = {str(k).lower() for k in obj}
-    return bool(keys & {"cpc", "law_model", "model", "name"}) and (
-        "cpc" in keys or "law_model" in keys or "model" in keys
-    )
+    """Require a model id and a numeric CPC (skip constraint/QA shells)."""
+    lower = {str(k).lower(): v for k, v in obj.items()}
+    has_model = any(k in lower for k in ("law_model", "model", "name"))
+    if "cpc" not in lower or not has_model:
+        return False
+    try:
+        val = float(lower["cpc"])
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(val))
 
 def _walk_json(obj: Any, inherited_model: str | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -70,13 +76,33 @@ def _walk_json(obj: Any, inherited_model: str | None = None) -> list[dict[str, A
     return rows
 
 def _load_rows(root: Path) -> pd.DataFrame:
+    """Prefer score tables; never harvest constraint/QA JSON with empty CPC."""
+    # 1) canonical CSV score tables from the Condition G runner
     for name in (
-        "model_metrics.parquet", "metrics.parquet", "condition_g_metrics.parquet",
-        "scores.parquet", "partition_metrics.parquet", "summary.parquet",
+        "condition_g_scores.csv",
+        "model_metrics.csv",
+        "scores.csv",
+        "metrics.csv",
     ):
         path = root / name
         if path.exists():
-            return _normalise(pd.read_parquet(path))
+            frame = _normalise(pd.read_csv(path))
+            if frame["CPC"].notna().any():
+                return frame.dropna(subset=["CPC"]).reset_index(drop=True)
+
+    # 2) parquet score tables
+    for name in (
+        "condition_g_scores.parquet",
+        "model_metrics.parquet",
+        "metrics.parquet",
+        "condition_g_metrics.parquet",
+        "scores.parquet",
+    ):
+        path = root / name
+        if path.exists():
+            frame = _normalise(pd.read_parquet(path))
+            if frame["CPC"].notna().any():
+                return frame.dropna(subset=["CPC"]).reset_index(drop=True)
     for path in sorted(root.glob("*.parquet")):
         try:
             frame = pd.read_parquet(path)
@@ -84,27 +110,57 @@ def _load_rows(root: Path) -> pd.DataFrame:
             continue
         cols = {str(c).lower() for c in frame.columns}
         if "cpc" in cols and ({"law_model", "model", "name"} & cols):
-            return _normalise(frame)
+            out = _normalise(frame)
+            if out["CPC"].notna().any():
+                return out.dropna(subset=["CPC"]).reset_index(drop=True)
+
+    # 3) per-model metrics.json (models/<name>/metrics.json or <name>/metrics.json)
     rows: list[dict[str, Any]] = []
-    for name in ("metrics.json", "qa.json", "summary.json", "model_metrics.json"):
-        path = root / name
-        if path.exists():
-            rows.extend(_walk_json(json.loads(path.read_text(encoding="utf-8"))))
-    for path in sorted(root.glob("**/*.json")):
-        if path.name in {"run_manifest.json", "figure_manifest.json"}:
+    model_paths = sorted(root.glob("models/*/metrics.json")) + sorted(
+        p for p in root.glob("*/metrics.json") if p.parent.name not in {"partitions", "qa", "logs"}
+    )
+    seen = set()
+    for path in model_paths:
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        # skip root-level aggregate names that are not model dirs
+        if path.parent == root:
             continue
         try:
             obj = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        inherited = None if path.parent == root else path.parent.name
-        for rec in _walk_json(obj, inherited):
-            if inherited and "law_model" not in rec and "model" not in rec:
-                rec["law_model"] = inherited
+        if not isinstance(obj, dict):
+            continue
+        inherited = path.parent.name
+        extracted = _walk_json(obj, inherited)
+        if not extracted and _looks_like_score_row({**obj, "law_model": inherited}):
+            extracted = [{**obj, "law_model": inherited}]
+        for rec in extracted:
+            rec.setdefault("law_model", inherited)
             rows.append(rec)
+
+    # 4) optional aggregate metrics.json only (not qa.json / **/*.json)
+    for name in ("metrics.json", "model_metrics.json", "summary.json"):
+        path = root / name
+        if path.exists():
+            rows.extend(_walk_json(json.loads(path.read_text(encoding="utf-8"))))
+
     if not rows:
-        raise SystemExit(f"No Condition G metrics found under {root}")
-    return _normalise(pd.DataFrame(rows))
+        raise SystemExit(
+            f"No Condition G scores found under {root} "
+            f"(expected condition_g_scores.csv or per-model metrics.json)"
+        )
+    frame = _normalise(pd.DataFrame(rows))
+    frame = frame.dropna(subset=["CPC"]).reset_index(drop=True)
+    if frame.empty:
+        raise SystemExit(
+            f"Condition G rows loaded but CPC all-NaN under {root}; "
+            f"refusing QA/constraint JSON. Prefer condition_g_scores.csv."
+        )
+    return frame
 
 def _normalise(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
