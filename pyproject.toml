@@ -36,6 +36,11 @@ attrOD-run-hk-smoke = "attrOD.scripts_entry:run_hk_smoke"
 attrOD-run = "attrOD.scripts_entry:run_orchestrator"
 attrOD-build-metric-distances = "attrOD.scripts_entry:build_metric_distances"
 attrOD-run-mitma-condition-s = "attrOD.scripts_entry:run_mitma_condition_s"
+attrOD-run-neurogravity-fewshot = "attrOD.scripts_entry:run_neurogravity_fewshot"
+attrOD-run-neurogravity-pretrain = "attrOD.scripts_entry:run_neurogravity_pretrain"
+attrOD-run-lombardy-condition-g = "attrOD.scripts_entry:run_lombardy_condition_g"
+attrOD-run-lombardy-condition-s = "attrOD.scripts_entry:run_lombardy_condition_s"
+attrOD-run-mitma-condition-g = "attrOD.scripts_entry:run_mitma_condition_g"
 
 [tool.setuptools.packages.find]
 where = ["src"]

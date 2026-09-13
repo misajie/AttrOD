@@ -47,3 +47,23 @@ def build_metric_distances():
 
 def run_mitma_condition_s():
     _run("run_mitma_condition_s")
+
+
+def run_mitma_condition_g():
+    _run("run_mitma_condition_g")
+
+
+def run_lombardy_condition_s():
+    _run("run_lombardy_condition_s")
+
+
+def run_lombardy_condition_g():
+    _run("run_lombardy_condition_g")
+
+
+def run_neurogravity_pretrain():
+    _run("run_neurogravity_pretrain")
+
+
+def run_neurogravity_fewshot():
+    _run("run_neurogravity_fewshot")
