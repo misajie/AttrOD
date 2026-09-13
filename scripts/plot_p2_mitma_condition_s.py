@@ -70,7 +70,7 @@ def _records_from_json(obj: Any, inherited_partition: str | None = None) -> list
         return []
 
     partition = obj.get("partition", inherited_partition)
-    if any(key in obj for key in ("CPC_R", "CPC_RT", "Delta", "CPC_indep")):
+    if any(key in obj for key in ("CPC_R", "CPC_RT", "CPC_T_lambdaR", "CPC_T_lambdaRT", "Delta", "CPC_indep")):
         record = dict(obj)
         if partition is not None:
             record["partition"] = partition
@@ -101,6 +101,11 @@ def _normalise_columns(
     aliases = {
         "cpc_r": "CPC_R",
         "cpc_rt": "CPC_RT",
+        # parquet / metrics_to_row schema (draft2 table names)
+        "cpc_t_lambdar": "CPC_R",
+        "cpc_t_lambdart": "CPC_RT",
+        "cpc_t_lambda_r": "CPC_R",
+        "cpc_t_lambda_rt": "CPC_RT",
         "delta": "Delta",
         "cpc_independence": "CPC_indep",
         "cpc_indep": "CPC_indep",
@@ -122,12 +127,21 @@ def _normalise_columns(
     if frame["partition"].isna().all() and default_partition is not None:
         frame["partition"] = default_partition
 
-    missing = [column for column in required if column not in frame.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {', '.join(missing)}")
+    core = [c for c in ("partition", "CPC_R", "CPC_RT", "Delta", "CPC_indep", "lambda") if c in required]
+    # companions optional (fill if absent)
+    for column in required:
+        if column not in frame.columns:
+            if column in core and column != "partition":
+                raise ValueError(f"Missing required columns: {column}")
+            if column != "partition":
+                frame[column] = np.nan
+
+    missing_core = [c for c in core if c not in frame.columns]
+    if missing_core:
+        raise ValueError(f"Missing required columns: {', '.join(missing_core)}")
 
     for column in required:
-        if column != "partition":
+        if column != "partition" and column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
     frame["partition"] = frame["partition"].astype(str)
