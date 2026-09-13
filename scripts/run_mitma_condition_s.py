@@ -99,6 +99,12 @@ def main() -> None:
     p.add_argument("--run-id", default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--bootstrap-resamples", type=int, default=1000)
+    p.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="CPU processes for day-bootstrap (0 = all cores); partitions stay sequential",
+    )
     p.add_argument("--study-area", default="mitma")
     p.add_argument(
         "--require-metric-distance",
@@ -209,6 +215,7 @@ def main() -> None:
             R_by_day=use_r_days,
             n_bootstrap=args.bootstrap_resamples,
             seed=args.seed,
+            n_jobs=args.n_jobs,
             study_area=args.study_area,
             partition=lab,
         )
@@ -288,6 +295,7 @@ def main() -> None:
                 "partitions_yaml": str(part_yaml),
                 "materialised": str(mat_dir),
                 "bootstrap_resamples": args.bootstrap_resamples,
+        "n_jobs": args.n_jobs,
                 "seed": args.seed,
             },
             code_root=_ROOT,

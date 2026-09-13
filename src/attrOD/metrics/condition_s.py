@@ -7,6 +7,9 @@ Day bootstrap: resample days with replacement; keep within-day OD structure.
 """
 from __future__ import annotations
 
+import concurrent.futures
+import os
+
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -178,6 +181,34 @@ def evaluate_independence_null(
     return out
 
 
+_BOOTSTRAP_STATE: dict = {}
+
+
+def _bootstrap_init(T_by_day, R_by_day, distances) -> None:
+    _BOOTSTRAP_STATE["T"] = T_by_day
+    _BOOTSTRAP_STATE["R"] = R_by_day
+    _BOOTSTRAP_STATE["D"] = distances
+
+
+def _bootstrap_one(payload):
+    """payload: (resample_idx, take_tuple) with precomputed day indices."""
+    resample_idx, take = payload
+    take = list(take)
+    T_by_day = _BOOTSTRAP_STATE["T"]
+    R_by_day = _BOOTSTRAP_STATE["R"]
+    distances = _BOOTSTRAP_STATE["D"]
+    Tb = sum(np.asarray(T_by_day[i], dtype=float) for i in take)
+    Rb = sum(np.asarray(R_by_day[i], dtype=float) for i in take)
+    est = compute_delta(Tb, Rb, distances=distances)
+    return {
+        "resample": int(resample_idx),
+        "day_indices": take,
+        "lambda": est["lambda"],
+        "CPC_R": est["CPC_R"],
+        "CPC_RT": est["CPC_RT"],
+        "Delta": est["Delta"],
+    }
+
 def day_bootstrap(
     T_by_day: Sequence[np.ndarray],
     R_by_day: Sequence[np.ndarray],
@@ -186,13 +217,21 @@ def day_bootstrap(
     n_resamples: int = 1000,
     seed: int = 0,
     keys: Sequence[str] = ("lambda", "CPC_R", "CPC_RT", "Delta"),
+    n_jobs: int = 1,
 ) -> Dict[str, Any]:
     """Day-unit bootstrap: resample days with replacement; keep within-day OD.
 
     For each resampled multiset of days, aggregate T and R by summing day
-    matrices (preserving within-day structure), then recompute λ/Δ.
+    matrices (preserving within-day structure), then recompute lambda/CPC/Delta.
     Also stores per-day point estimates for audit.
+
+    n_jobs > 1 parallelises resamples across processes. Day indices are drawn
+    up front with ``seed``, so multi-process results match single-process science
+    (up to floating-point reduction order). On Linux, prefer fork so day stacks
+    are inherited (no multi-GB pickle of N≈3909 matrices).
     """
+    import multiprocessing as _mp
+
     D = len(T_by_day)
     if D < 2:
         raise ValueError("day bootstrap requires D>=2")
@@ -203,30 +242,57 @@ def day_bootstrap(
     day_rows: List[Dict[str, Any]] = []
     for d in range(D):
         delta = compute_delta(T_by_day[d], R_by_day[d], distances=distances)
-        day_rows.append({"day_index": d, **{k: delta.get(k if k != "CPC_R" else "CPC_R") for k in ("lambda", "CPC_R", "CPC_RT", "Delta")}})
+        day_rows.append(
+            {
+                "day_index": d,
+                "lambda": delta.get("lambda"),
+                "CPC_R": delta.get("CPC_R"),
+                "CPC_RT": delta.get("CPC_RT"),
+                "Delta": delta.get("Delta"),
+            }
+        )
 
-    # point estimate on pooled sum
     T_sum = sum(np.asarray(t, dtype=float) for t in T_by_day)
     R_sum = sum(np.asarray(r, dtype=float) for r in R_by_day)
     pooled = compute_delta(T_sum, R_sum, distances=distances)
 
-    boot_records: List[Dict[str, Any]] = []
     idx = np.arange(D)
-    for b in range(n_resamples):
-        take = rng.choice(idx, size=D, replace=True)
-        Tb = sum(np.asarray(T_by_day[i], dtype=float) for i in take)
-        Rb = sum(np.asarray(R_by_day[i], dtype=float) for i in take)
-        est = compute_delta(Tb, Rb, distances=distances)
-        boot_records.append(
-            {
-                "resample": b,
-                "day_indices": take.tolist(),
-                "lambda": est["lambda"],
-                "CPC_R": est["CPC_R"],
-                "CPC_RT": est["CPC_RT"],
-                "Delta": est["Delta"],
-            }
-        )
+    takes = [rng.choice(idx, size=D, replace=True) for _ in range(n_resamples)]
+    jobs = [(b, tuple(int(x) for x in takes[b])) for b in range(n_resamples)]
+
+    n_jobs = int(n_jobs) if n_jobs is not None else 1
+    if n_jobs <= 0:
+        n_jobs = os.cpu_count() or 1
+
+    _bootstrap_init(list(T_by_day), list(R_by_day), distances)
+
+    if n_jobs == 1 or n_resamples <= 1:
+        boot_records = [_bootstrap_one(job) for job in jobs]
+    else:
+        try:
+            ctx = _mp.get_context("fork")
+            use_init = False
+        except ValueError:
+            ctx = _mp.get_context("spawn")
+            use_init = True
+
+        chunk = max(1, n_resamples // (n_jobs * 4))
+        if use_init:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=n_jobs,
+                mp_context=ctx,
+                initializer=_bootstrap_init,
+                initargs=(list(T_by_day), list(R_by_day), distances),
+            ) as ex:
+                boot_records = list(ex.map(_bootstrap_one, jobs, chunksize=chunk))
+        else:
+            # fork: children inherit _BOOTSTRAP_STATE (COW); avoid pickling stacks
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=n_jobs,
+                mp_context=ctx,
+            ) as ex:
+                boot_records = list(ex.map(_bootstrap_one, jobs, chunksize=chunk))
+        boot_records.sort(key=lambda r: r["resample"])
 
     summary: Dict[str, float] = {}
     for k in keys:
@@ -240,6 +306,7 @@ def day_bootstrap(
         "n_days": D,
         "n_resamples": n_resamples,
         "seed": seed,
+        "n_jobs": n_jobs,
         "unit": "day",
         "within_day_od_preserved": True,
         "day_point_estimates": day_rows,
@@ -252,7 +319,6 @@ def day_bootstrap(
             "Delta": pooled["Delta"],
         },
     }
-
 
 def day_bootstrap_frame(result: Mapping[str, Any]) -> pd.DataFrame:
     """Flatten bootstrap samples to a parquet-friendly DataFrame."""

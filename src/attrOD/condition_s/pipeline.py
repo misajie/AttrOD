@@ -88,10 +88,11 @@ def day_bootstrap(
     distances: Optional[np.ndarray] = None,
     n_resamples: int = 1000,
     seed: int = 0,
+    n_jobs: int = 1,
 ) -> Dict[str, Any]:
-    """Full day-bootstrap audit payload (Ticket 2)."""
+    """Full day-bootstrap audit payload (Ticket 2 / P2-MP)."""
     return day_bootstrap_engine(
-        T_by_day, R_by_day, distances=distances, n_resamples=n_resamples, seed=seed
+        T_by_day, R_by_day, distances=distances, n_resamples=n_resamples, seed=seed, n_jobs=n_jobs
     )
 
 
@@ -124,6 +125,7 @@ def run_condition_s_full(
     R_by_day: Optional[Sequence[np.ndarray]] = None,
     n_bootstrap: int = 1000,
     seed: int = 0,
+    n_jobs: int = 1,
     study_area: str = "",
     partition: str = "full",
     n_perm_null: int = 0,
@@ -145,6 +147,6 @@ def run_condition_s_full(
     }
     if T_by_day is not None and R_by_day is not None and len(T_by_day) >= 2:
         payload["bootstrap"] = day_bootstrap(
-            T_by_day, R_by_day, distances=distances, n_resamples=n_bootstrap, seed=seed
+            T_by_day, R_by_day, distances=distances, n_resamples=n_bootstrap, seed=seed, n_jobs=n_jobs
         )
     return payload
