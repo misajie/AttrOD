@@ -30,7 +30,7 @@ from attrOD.data.lombardy_materialise import materialise_lombardy
 
 def main() -> None:
     p = argparse.ArgumentParser(description="P5-MAT Lombardy materialise + freeze")
-    p.add_argument("--od", required=True, help="raw OD table (csv/parquet/xlsx)")
+    p.add_argument("--od", required=True, help="raw OD table (csv/parquet/xlsx); long MOTIVO or wide LAV_/STU_/OCC_/AFF_/RIT_ x mode")
     p.add_argument("--zones", required=True, help="zone polygons (gpkg/geojson/shp)")
     p.add_argument("--zone-id-col", default="id")
     p.add_argument("--fua", default=None, help="optional FUA/provincial polygon for clip")

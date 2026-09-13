@@ -37,6 +37,92 @@ PM_BANDS = ("pomeriggio", "sera", "pm", "afternoon", "evening", "14-20", "16-20"
 AM_BANDS = ("mattina", "am", "7-10", "07-10", "morning")
 
 
+# Wide OD2016 motive×mode prefixes (Regione Lombardia passeggeri release)
+WIDE_MOTIVE_PREFIX = {
+    "LAV": "lavoro",
+    "STU": "studio",
+    "OCC": "occasionali",
+    "AFF": "affari",
+    "RIT": "rientri a casa",
+}
+
+
+def _is_wide_motive_mode(df: pd.DataFrame) -> bool:
+    cols = [str(c) for c in df.columns]
+    return any(
+        c.upper().startswith(tuple(f"{p}_" for p in WIDE_MOTIVE_PREFIX))
+        for c in cols
+    )
+
+
+def wide_motive_mode_to_long(raw: pd.DataFrame) -> pd.DataFrame:
+    """Reshape LAV_/STU_/OCC_/AFF_/RIT_×mode wide cells to long motive rows.
+
+    Keeps origin/destination and FASCIA_ORARIA when present. Modes are summed
+    later by partition builders (draft2: sum over attributes not defining the cut).
+    """
+    df = raw.copy()
+    # origin/destination aliases before melt
+    for a, b in [
+        ("ORIGINE", "origin"),
+        ("DESTINAZIONE", "destination"),
+        ("origin_id", "origin"),
+        ("destination_id", "destination"),
+        ("COD_ZONA_O", "origin"),
+        ("COD_ZONA_D", "destination"),
+        ("ZONA_O", "origin"),
+        ("ZONA_D", "destination"),
+        ("ORIG", "origin"),
+        ("DEST", "destination"),
+    ]:
+        if a in df.columns and b not in df.columns:
+            df = df.rename(columns={a: b})
+    for a, b in [
+        ("FASCIA_ORARIA", "FASCIA_ORARIA"),
+        ("fascia_oraria", "FASCIA_ORARIA"),
+        ("FASCIA", "FASCIA_ORARIA"),
+        ("ORARIO", "FASCIA_ORARIA"),
+    ]:
+        if a in df.columns and (b not in df.columns or a == b):
+            if a != b:
+                df = df.rename(columns={a: b})
+
+    if "origin" not in df.columns or "destination" not in df.columns:
+        raise ValueError(
+            "wide OD needs origin/destination columns "
+            "(ORIGINE/DESTINAZIONE or COD_ZONA_O/D)"
+        )
+
+    value_cols = []
+    meta = []
+    for c in df.columns:
+        cu = str(c).upper()
+        hit = None
+        for pref in WIDE_MOTIVE_PREFIX:
+            if cu == pref or cu.startswith(pref + "_"):
+                hit = pref
+                break
+        if hit is not None:
+            value_cols.append(str(c))
+            meta.append((str(c), hit, str(c)[len(hit) + 1 :] if "_" in str(c) else ""))
+    if not value_cols:
+        raise ValueError("no LAV_/STU_/OCC_/AFF_/RIT_ value columns found")
+
+    id_vars = [c for c in ("origin", "destination", "FASCIA_ORARIA") if c in df.columns]
+    long = df.melt(id_vars=id_vars, value_vars=value_cols, var_name="_wide_col", value_name="flow")
+    pref_map = {c: WIDE_MOTIVE_PREFIX[p] for c, p, _m in meta}
+    mode_map = {c: m for c, _p, m in meta}
+    long["motive"] = long["_wide_col"].map(pref_map)
+    long["mode"] = long["_wide_col"].map(mode_map)
+    long["flow"] = pd.to_numeric(long["flow"], errors="coerce").fillna(0.0)
+    long = long.drop(columns=["_wide_col"])
+    # drop exact zeros to shrink
+    long = long.loc[long["flow"] != 0.0].copy()
+    return long.reset_index(drop=True)
+
+
+
+
 def sha256_16(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -66,11 +152,16 @@ def load_od_table(path: Path) -> pd.DataFrame:
 
 def normalise_od_columns(raw: pd.DataFrame) -> pd.DataFrame:
     df = raw.copy()
+    # Auto-detect Regione Lombardia wide motive×mode layout
+    if "motive" not in df.columns and _is_wide_motive_mode(df):
+        df = wide_motive_mode_to_long(df)
     renames = {
         "ORIGINE": "origin",
         "DESTINAZIONE": "destination",
         "origin_id": "origin",
         "destination_id": "destination",
+        "COD_ZONA_O": "origin",
+        "COD_ZONA_D": "destination",
         "MOTIVO": "motive",
         "motivo": "motive",
         "FASCIA_ORARIA": "FASCIA_ORARIA",
@@ -88,7 +179,9 @@ def normalise_od_columns(raw: pd.DataFrame) -> pd.DataFrame:
                 df = df.rename(columns={c: "flow"})
                 break
     if "motive" not in df.columns:
-        raise ValueError("OD table needs a motive column (MOTIVO/motive)")
+        raise ValueError(
+            "OD table needs motive (MOTIVO) or wide LAV_/STU_/OCC_/AFF_/RIT_×mode columns"
+        )
     if "origin" not in df.columns or "destination" not in df.columns:
         raise ValueError("OD table needs origin/destination columns")
     return df
