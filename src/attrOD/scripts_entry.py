@@ -1,4 +1,4 @@
-"""Console-script entry points delegating to scripts/ modules."""
+﻿"""Console-script entry points delegating to scripts/ modules."""
 from __future__ import annotations
 
 def _run(modname: str) -> None:
@@ -67,3 +67,8 @@ def run_neurogravity_pretrain():
 
 def run_neurogravity_fewshot():
     _run("run_neurogravity_fewshot")
+
+
+def materialise_lombardy():
+    _run("materialise_lombardy")
+

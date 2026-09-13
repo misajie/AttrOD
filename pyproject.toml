@@ -1,4 +1,4 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
@@ -41,6 +41,7 @@ attrOD-run-neurogravity-pretrain = "attrOD.scripts_entry:run_neurogravity_pretra
 attrOD-run-lombardy-condition-g = "attrOD.scripts_entry:run_lombardy_condition_g"
 attrOD-run-lombardy-condition-s = "attrOD.scripts_entry:run_lombardy_condition_s"
 attrOD-run-mitma-condition-g = "attrOD.scripts_entry:run_mitma_condition_g"
+attrOD-materialise-lombardy = "attrOD.scripts_entry:materialise_lombardy"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -48,3 +49,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
